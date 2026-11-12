@@ -37,6 +37,19 @@ launchctl kickstart gui/$(id -u)/local.pr-autoreview   # run once now
 
 Logs: `~/Library/Logs/pr-autoreview.log` · Remove: `./uninstall.sh`
 
+`install.sh` copies the files to `~/.local/share/pr-autoreview` and runs them from
+there, because macOS blocks background services from reading `~/Desktop` and
+`~/Documents`. **Re-run `./install.sh` after editing anything in this repo.**
+
+## Dashboard
+
+`install.sh` also starts an always-on local dashboard at **http://localhost:8787**
+(localhost only). It refreshes every 3 seconds and shows the PRs being reviewed right
+now with a timer, the PRs still waiting on you, and a history of reviews. Each history
+row links to the PR and to the posted review; expand it to see the summary and
+every finding. It reads `status.json` and `events.jsonl` from
+`~/.local/state/pr-autoreview`.
+
 ## Configuration (`config.env`)
 
 | Var | Default | |
@@ -49,6 +62,7 @@ Logs: `~/Library/Logs/pr-autoreview.log` · Remove: `./uninstall.sh`
 | `MODEL` | Claude Code default | e.g. `sonnet` to save usage |
 | `INTERVAL_SECONDS` | `900` | Re-run `./install.sh` after changing |
 | `DRY_RUN` | `0` | `1` = print, don't post |
+| `DASHBOARD_PORT` | `8787` | Re-run `./install.sh` after changing |
 
 Tune what Claude looks for in `prompt.md`.
 

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR Autoreview</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --border: #e3e6eb; --text: #1b1f24; --muted: #667080;
+    --accent: #5b5bd6; --green: #1a7f37; --green-bg: #e6f4ea; --red: #c62828; --red-bg: #fdecea;
+    --amber: #9a6700; --amber-bg: #fff4d6; --blue: #0969da; --blue-bg: #e7f0fd; --gray-bg: #eef0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8ec; --muted: #8b93a3;
+      --accent: #8b8bff; --green: #4ac26b; --green-bg: #12261a; --red: #ff7b72; --red-bg: #2d1414;
+      --amber: #e3b341; --amber-bg: #2b230e; --blue: #58a6ff; --blue-bg: #0f2240; --gray-bg: #222733;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 28px 16px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 10px; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .state { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--green); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 20px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .stat .n { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .l { color: var(--muted); font-size: 12px; }
+  .list { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .empty { padding: 18px; color: var(--muted); }
+  .row { border-top: 1px solid var(--border); }
+  .row:first-child { border-top: 0; }
+  .row > summary, .row > .line { list-style: none; display: grid; grid-template-columns: 150px 1fr auto;
+        gap: 12px; align-items: center; padding: 11px 14px; cursor: default; }
+  .row > summary { cursor: pointer; }
+  .row > summary::-webkit-details-marker { display: none; }
+  .row > summary:hover { background: var(--gray-bg); }
+  .pr { min-width: 0; }
+  .pr .t { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; }
+  .pr .r { color: var(--muted); font-size: 12px; }
+  .meta { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
+  .pill { justify-self: start; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+  .pill.ok { background: var(--green-bg); color: var(--green); }
+  .pill.block { background: var(--red-bg); color: var(--red); }
+  .pill.nb { background: var(--amber-bg); color: var(--amber); }
+  .pill.run { background: var(--blue-bg); color: var(--blue); }
+  .pill.fail { background: var(--red-bg); color: var(--red); }
+  .pill.wait, .pill.dry { background: var(--gray-bg); color: var(--muted); }
+  .detail { padding: 4px 14px 16px 176px; }
+  .detail p { margin: 0 0 10px; }
+  .finding { display: flex; gap: 10px; padding: 8px 0; border-top: 1px dashed var(--border); }
+  .finding .sev { flex: none; font-size: 11px; font-weight: 700; width: 92px; padding-top: 2px; }
+  .finding .sev.b { color: var(--red); } .finding .sev.n { color: var(--amber); }
+  .finding code { font-size: 12px; color: var(--muted); }
+  .finding .c { white-space: pre-wrap; word-break: break-word; }
+  .err { color: var(--red); }
+  @media (max-width: 640px) {
+    .row > summary, .row > .line { grid-template-columns: 1fr; gap: 4px; }
+    .meta { text-align: left; }
+    .detail { padding-left: 14px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>PR Autoreview</h1>
+    <div class="state"><span id="dry" class="badge" hidden>DRY RUN</span><span id="dot" class="dot"></span><span id="state">Connecting…</span></div>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <h2>Reviewing now</h2>
+  <div class="list" id="now"></div>
+
+  <h2>Waiting on you</h2>
+  <div class="list" id="queue"></div>
+
+  <h2>History</h2>
+  <div class="list" id="history"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const open = new Set();
+let status = null, latest = [];
+
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return `${Math.floor(s)}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+function elapsed(iso) {
+  const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+function pill(e) {
+  if (!e) return `<span class="pill wait">Not yet reviewed</span>`;
+  if (e.status === "reviewing") return `<span class="pill run">Reviewing ${elapsed(e.time)}</span>`;
+  if (e.status === "failed") return `<span class="pill fail">Failed</span>`;
+  const label = e.blocking ? `${e.blocking} blocking · ${e.non_blocking} nb`
+              : e.non_blocking ? `${e.non_blocking} non-blocking` : (e.event === "APPROVE" ? "Approved" : "No issues");
+  const cls = e.status === "dry_run" ? "dry" : e.blocking ? "block" : e.non_blocking ? "nb" : "ok";
+  return `<span class="pill ${cls}">${e.status === "dry_run" ? "Dry run · " : ""}${label}</span>`;
+}
+const prCell = (p) => `<div class="pr"><a class="t" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>
+  <span class="r">${esc(p.repo)} #${esc(p.number)}</span></div>`;
+
+function detail(e) {
+  if (e.status === "failed") return `<div class="detail"><p class="err">${esc(e.error)}</p></div>`;
+  const f = (e.findings || []).map((x) => {
+    const loc = x.path ? `<a href="${esc(e.url)}/files" target="_blank" rel="noopener"><code>${esc(x.path)}${x.line ? ":" + x.line : ""}</code></a>` : "<code>general</code>";
+    return `<div class="finding"><span class="sev ${x.severity === "blocking" ? "b" : "n"}">${x.severity === "blocking" ? "BLOCKING" : "NON-BLOCKING"}</span>
+      <div>${loc}<div class="c">${esc(x.comment)}</div></div></div>`;
+  }).join("");
+  const link = e.review_url && e.review_url !== "null" ? ` · <a href="${esc(e.review_url)}" target="_blank" rel="noopener">View posted review ↗</a>` : "";
+  return `<div class="detail"><p>${esc(e.summary)}${link}</p>${f}</div>`;
+}
+
+function render() {
+  const running = latest.filter((e) => e.status === "reviewing");
+  const done = latest.filter((e) => e.status !== "reviewing");
+  const byPr = new Map(latest.map((e) => [`${e.repo}#${e.number}`, e]));
+  const queue = status?.queue || [];
+  const posted = done.filter((e) => e.status === "posted");
+
+  $("dry").hidden = !status?.dry_run;
+  $("dot").className = "dot" + (status?.running ? " live" : "");
+  $("state").textContent = !status ? "No runs yet" : status.running ? "Run in progress" : `Idle · last run ${ago(status.updated)}`;
+
+  const stats = [
+    [queue.length, "Waiting on you"], [running.length, "Reviewing now"],
+    [posted.filter((e) => e.event === "APPROVE").length, "Approved"],
+    [posted.filter((e) => e.blocking > 0).length, "With blocking issues"],
+    [done.filter((e) => e.status === "failed").length, "Failed"],
+  ];
+  $("stats").innerHTML = stats.map(([n, l]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+
+  $("now").innerHTML = running.length ? running.map((e) =>
+    `<div class="row"><div class="line">${pill(e)}${prCell(e)}<span class="meta">${esc(e.sha.slice(0, 7))}</span></div></div>`).join("")
+    : `<div class="empty">Nothing in progress.</div>`;
+
+  $("queue").innerHTML = queue.length ? queue.map((p) => {
+    const e = byPr.get(`${p.repo}#${p.number}`);
+    return `<div class="row"><div class="line">${pill(e)}${prCell(p)}<span class="meta">${e ? ago(e.time) : ""}</span></div></div>`;
+  }).join("") : `<div class="empty">No PRs are waiting on your review.</div>`;
+
+  $("history").innerHTML = done.length ? done.map((e) => {
+    const k = `${e.repo}#${e.number}@${e.sha}`;
+    return `<details class="row" data-k="${esc(k)}" ${open.has(k) ? "open" : ""}>
+      <summary>${pill(e)}${prCell(e)}<span class="meta">${ago(e.time)}</span></summary>${detail(e)}</details>`;
+  }).join("") : `<div class="empty">No reviews yet.</div>`;
+}
+
+document.addEventListener("toggle", (ev) => {
+  const k = ev.target.dataset?.k;
+  if (k) ev.target.open ? open.add(k) : open.delete(k);
+}, true);
+
+async function poll() {
+  try {
+    const [s, ev] = await Promise.all([
+      fetch("status.json").then((r) => r.text()),
+      fetch("events.jsonl").then((r) => r.text()),
+    ]);
+    status = s.trim() ? JSON.parse(s) : null;
+    const last = new Map();
+    for (const line of ev.split("\n")) {
+      if (!line.trim()) continue;
+      try { const e = JSON.parse(line); last.set(`${e.repo}#${e.number}@${e.sha}`, e); } catch {}
+    }
+    // A "reviewing" entry left behind by a run that has since ended is stale.
+    latest = [...last.values()]
+      .map((e) => e.status === "reviewing" && !status?.running ? { ...e, status: "failed", error: "Run ended before this review finished." } : e)
+      .sort((a, b) => b.time.localeCompare(a.time));
+    render();
+  } catch (err) {
+    $("state").textContent = "Dashboard server unreachable";
+    $("dot").className = "dot";
+  }
+}
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>

@@ -25,6 +25,23 @@ touch "$STATE_DIR/reviewed.txt" "$STATE_DIR/failures.txt"
 
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
 
+# Dashboard feed: one JSON line per PR state change, plus a status snapshot.
+EVENTS="$STATE_DIR/events.jsonl"
+emit() { # emit <status> [extra-json]
+  jq -cn --arg time "$(date -u +%FT%TZ)" --arg status "$1" --arg repo "$repo" \
+    --arg number "$num" --arg url "$url" --arg title "$title" --arg sha "$sha" \
+    --argjson extra "${2:-"{}"}" \
+    '{time: $time, status: $status, repo: $repo, number: ($number | tonumber),
+      url: $url, title: $title, sha: $sha} + $extra' >>"$EVENTS"
+}
+write_status() { # write_status <running:true|false> <queue-json>
+  jq -n --argjson running "$1" --argjson queue "$2" --arg time "$(date -u +%FT%TZ)" \
+    --arg dry "$DRY_RUN" --argjson max "$MAX_PRS_PER_RUN" \
+    '{running: $running, updated: $time, dry_run: ($dry == "1"), max_per_run: $max,
+      queue: ($queue | map({url, number, title, repo: .repository.nameWithOwner}))}' \
+    >"$STATE_DIR/status.json.tmp" && mv "$STATE_DIR/status.json.tmp" "$STATE_DIR/status.json"
+}
+
 # Single instance: a lock dir holding our pid; reclaim it if that pid is gone.
 LOCK="$STATE_DIR/lock"
 if ! mkdir "$LOCK" 2>/dev/null; then
@@ -34,13 +51,14 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   rm -rf "$LOCK"; mkdir "$LOCK"
 fi
 echo $$ >"$LOCK/pid"
-trap 'rm -rf "$LOCK"' EXIT
+trap 'write_status false "${prs:-[]}"; rm -rf "$LOCK"' EXIT
 
 search_args=(--review-requested=@me --state=open --draft=false --limit 50
              --json url,number,repository,title)
 for o in $OWNERS; do search_args+=(--owner "$o"); done
 prs="$(gh search prs "${search_args[@]}")"
 log "found $(jq length <<<"$prs") PR(s) awaiting review"
+write_status true "$prs"
 
 done_count=0
 while read -r pr; do
@@ -50,6 +68,8 @@ while read -r pr; do
   repo="$(jq -r .repository.nameWithOwner <<<"$pr")"
   num="$(jq -r .number <<<"$pr")"
   url="$(jq -r .url <<<"$pr")"
+  title="$(jq -r .title <<<"$pr")"
+  sha=""
   [[ " $EXCLUDE_REPOS " == *" $repo "* ]] && continue
 
   meta="$(gh pr view "$url" --json headRefOid,baseRefName,title,body,author)"
@@ -64,6 +84,7 @@ while read -r pr; do
 
   log "reviewing $url ($sha)"
   done_count=$((done_count + 1))
+  emit reviewing
 
   set +e
   (
@@ -107,8 +128,10 @@ $(jq -r '.body // ""' <<<"$meta")
       ${MODEL:+--model "$MODEL"})"
 
     if [ "$(jq -r '.is_error' <<<"$out")" != "false" ] || [ "$(jq '.structured_output == null' <<<"$out")" = "true" ]; then
-      log "claude failed: $(jq -r '.result // .subtype' <<<"$out" | head -c 500)"
-      exit 1
+      reason="$(jq -r '.result // .subtype' <<<"$out" | head -c 500)"
+      log "claude failed: $reason"
+      emit failed "$(jq -cn --arg e "Claude: $reason" '{error: $e}')"
+      exit 2
     fi
     review="$(jq '.structured_output' <<<"$out")"
 
@@ -134,25 +157,33 @@ $(jq -r '.body // ""' <<<"$meta")
           comments: ($inline | map({path, line, side: "RIGHT", body: "\(tag) \(.comment)"}))
         }' <<<"$review")"
 
+    result="$(jq -c --argjson p "$payload" '{event: $p.event, summary,
+      findings: (.findings // []),
+      blocking: ([.findings[]? | select(.severity == "blocking")] | length),
+      non_blocking: ([.findings[]? | select(.severity != "blocking")] | length)}' <<<"$review")"
+
     if [ "$DRY_RUN" = "1" ]; then
-      log "DRY_RUN — would post to $url:"; jq . <<<"$payload"; exit 0
+      log "DRY_RUN — would post to $url:"; jq . <<<"$payload"
+      emit dry_run "$result"; exit 0
     fi
 
-    if ! gh api "repos/$repo/pulls/$num/reviews" --input - <<<"$payload" >/dev/null 2>"$STATE_DIR/last-error"; then
+    if ! resp="$(gh api "repos/$repo/pulls/$num/reviews" --input - <<<"$payload" 2>"$STATE_DIR/last-error")"; then
       # Usually a comment anchored to a line outside the diff: fold them into the body.
       log "inline post failed ($(head -c 200 "$STATE_DIR/last-error")); retrying without inline comments"
       payload="$(jq '.body += (if (.comments | length) > 0
                     then "\n\n**Comments**\n" + (.comments | map("- `\(.path):\(.line)` \(.body)") | join("\n"))
                     else "" end) | .comments = []' <<<"$payload")"
-      gh api "repos/$repo/pulls/$num/reviews" --input - <<<"$payload" >/dev/null
+      resp="$(gh api "repos/$repo/pulls/$num/reviews" --input - <<<"$payload")"
     fi
     log "posted $(jq -r .event <<<"$payload") on $url"
+    emit posted "$(jq -c --arg u "$(jq -r .html_url <<<"$resp")" '. + {review_url: $u}' <<<"$result")"
   )
   rc=$?
   set -e
   if [ "$rc" -ne 0 ]; then
     echo "$key" >>"$STATE_DIR/failures.txt"
     log "failed $url"
+    [ "$rc" -eq 2 ] || emit failed '{"error":"Setup or posting failed; see ~/Library/Logs/pr-autoreview.log"}'
     continue
   fi
 
