@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "findings"],
+  "properties": {
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "path", "line", "comment"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["blocking", "non-blocking"] },
+          "path": { "type": "string" },
+          "line": { "type": "integer", "minimum": 0 },
+          "comment": { "type": "string" }
+        }
+      }
+    }
+  }
+}
