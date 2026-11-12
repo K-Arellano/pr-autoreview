@@ -146,7 +146,6 @@ $(jq -r '.body // ""' <<<"$meta")
           commit_id: $sha,
           event: (if ($f | length) == 0 and $approve == "true" then "APPROVE" else "COMMENT" end),
           body: ([
-            "### 🤖 Claude review",
             (if ($f | length) == 0 then "✅ No issues found."
              elif $b > 0 then "**\($b) blocking**, \($nb) non-blocking — please address the blocking items before merging."
              else "**0 blocking**, \($nb) non-blocking — nothing here should hold up the merge." end),
