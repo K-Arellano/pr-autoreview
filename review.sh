@@ -12,7 +12,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 : "${MAX_PRS_PER_RUN:=5}"
 : "${MAX_ATTEMPTS:=3}"      # give up on a PR head after this many failures
 : "${MODEL:=}"              # empty = Claude Code default
-: "${DRY_RUN:=0}"           # 1 = print the review instead of posting it
+: "${DRY_RUN:=0}"
+: "${INTERVAL_SECONDS:=900}"           # 1 = print the review instead of posting it
 STATE_DIR="${STATE_DIR:-$HOME/.local/state/pr-autoreview}"
 CACHE_DIR="${CACHE_DIR:-$HOME/.cache/pr-autoreview}"
 
@@ -36,8 +37,9 @@ emit() { # emit <status> [extra-json]
 }
 write_status() { # write_status <running:true|false> <queue-json>
   jq -n --argjson running "$1" --argjson queue "$2" --arg time "$(date -u +%FT%TZ)" \
-    --arg dry "$DRY_RUN" --argjson max "$MAX_PRS_PER_RUN" \
+    --arg dry "$DRY_RUN" --argjson max "$MAX_PRS_PER_RUN" --argjson interval "$INTERVAL_SECONDS" \
     '{running: $running, updated: $time, dry_run: ($dry == "1"), max_per_run: $max,
+      next_run: (if $running then null else (now + $interval | todate) end),
       queue: ($queue | map({url, number, title, repo: .repository.nameWithOwner}))}' \
     >"$STATE_DIR/status.json.tmp" && mv "$STATE_DIR/status.json.tmp" "$STATE_DIR/status.json"
 }
@@ -192,7 +194,12 @@ $(jq -r '.body // ""' <<<"$meta")
     continue
   fi
 
-  [ "$DRY_RUN" = "1" ] || echo "$key" >>"$STATE_DIR/reviewed.txt"
+  if [ "$DRY_RUN" != "1" ]; then
+    echo "$key" >>"$STATE_DIR/reviewed.txt"
+    # Posting a review clears the request, so drop it from the dashboard queue now.
+    prs="$(jq --arg u "$url" 'map(select(.url != $u))' <<<"$prs")"
+    write_status true "$prs"
+  fi
 done 3< <(jq -c '.[]' <<<"$prs")
 
 log "done"

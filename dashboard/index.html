@@ -31,6 +31,10 @@
   .dot.live { background: var(--green); animation: pulse 1.4s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .35; } }
   .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); }
+  button { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 7px;
+           border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 20px; }
   .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
   .stat .n { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -74,7 +78,7 @@
 <main>
   <header>
     <h1>PR Autoreview</h1>
-    <div class="state"><span id="dry" class="badge" hidden>DRY RUN</span><span id="dot" class="dot"></span><span id="state">Connecting…</span></div>
+    <div class="state"><span id="dry" class="badge" hidden>DRY RUN</span><span id="dot" class="dot"></span><span id="state">Connecting…</span><button id="run" type="button">Run now</button></div>
   </header>
 
   <div class="stats" id="stats"></div>
@@ -101,6 +105,11 @@ function ago(iso) {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return new Date(iso).toLocaleDateString();
+}
+function until(iso) {
+  const s = Math.round((new Date(iso) - Date.now()) / 1000);
+  if (s <= 0) return "next run due now";
+  return s < 60 ? `next run in ${s}s` : `next run in ${Math.ceil(s / 60)}m`;
 }
 function elapsed(iso) {
   const s = Math.floor((Date.now() - new Date(iso)) / 1000);
@@ -138,7 +147,8 @@ function render() {
 
   $("dry").hidden = !status?.dry_run;
   $("dot").className = "dot" + (status?.running ? " live" : "");
-  $("state").textContent = !status ? "No runs yet" : status.running ? "Run in progress" : `Idle · last run ${ago(status.updated)}`;
+  $("state").textContent = !status ? "No runs yet" : status.running ? "Run in progress" : `Idle · last run ${ago(status.updated)}${status.next_run ? " · " + until(status.next_run) : ""}`;
+  $("run").disabled = !!status?.running || kicking;
 
   const stats = [
     [queue.length, "Waiting on you"], [running.length, "Reviewing now"],
@@ -191,6 +201,13 @@ async function poll() {
     $("dot").className = "dot";
   }
 }
+let kicking = false;
+$("run").addEventListener("click", async () => {
+  kicking = true; $("run").disabled = true; $("run").textContent = "Starting…";
+  try { await fetch("run", { method: "POST" }); } catch {}
+  setTimeout(() => { kicking = false; $("run").textContent = "Run now"; poll(); }, 4000);
+});
+
 poll();
 setInterval(poll, 3000);
 </script>
