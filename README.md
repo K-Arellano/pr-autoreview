@@ -21,8 +21,10 @@ Mac is awake and you are logged in.
    Your user-level skills and the repo's `CLAUDE.md` apply.
 4. The script — not Claude — builds and posts the review via `gh api`. If an inline
    comment points outside the diff, it retries with comments folded into the body.
-5. Records `owner/repo#N@sha` in `~/.local/state/pr-autoreview/reviewed.txt`. New
-   pushes plus a re-request get reviewed again.
+5. Records `owner/repo#N@sha@<latest review request time>` in
+   `~/.local/state/pr-autoreview/reviewed.txt`. Submitting a review clears the request,
+   so a PR comes back only when re-requested, and is then reviewed again, even with
+   no new commits.
 
 ## Setup
 

@@ -57,6 +57,7 @@ search_args=(--review-requested=@me --state=open --draft=false --limit 50
              --json url,number,repository,title)
 for o in $OWNERS; do search_args+=(--owner "$o"); done
 prs="$(gh search prs "${search_args[@]}")"
+me="$(gh api user -q .login)"
 log "found $(jq length <<<"$prs") PR(s) awaiting review"
 write_status true "$prs"
 
@@ -75,7 +76,12 @@ while read -r pr <&3; do
   meta="$(gh pr view "$url" --json headRefOid,baseRefName,title,body,author)"
   sha="$(jq -r .headRefOid <<<"$meta")"
   base="$(jq -r .baseRefName <<<"$meta")"
-  key="$repo#$num@$sha"
+  # Include the latest review request (to me or a team) in the key, so a
+  # re-request triggers a new review even when no commits were pushed.
+  requested_at="$(gh api "repos/$repo/issues/$num/timeline" --paginate --jq \
+    ".[] | select(.event == \"review_requested\" and (.requested_reviewer.login == \"$me\" or .requested_team != null)) | .created_at" \
+    | tail -1)"
+  key="$repo#$num@$sha@${requested_at:-unknown}"
 
   grep -qxF "$key" "$STATE_DIR/reviewed.txt" && continue
   if [ "$(grep -cxF "$key" "$STATE_DIR/failures.txt" || true)" -ge "$MAX_ATTEMPTS" ]; then
