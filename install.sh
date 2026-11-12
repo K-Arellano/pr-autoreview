@@ -75,11 +75,23 @@ cat >"$DASH_PLIST" <<EOF
 </plist>
 EOF
 
+# Don't kill a review mid-flight: wait for any in-progress run to finish.
+LOCK="${STATE_DIR:-$HOME/.local/state/pr-autoreview}/lock"
+while [ -d "$LOCK" ] && kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; do
+  echo "waiting for the current review run to finish..."; sleep 10
+done
+
 for l in "$LABEL" "$DASH_LABEL"; do
   launchctl bootout "gui/$(id -u)/$l" 2>/dev/null || true
 done
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-launchctl bootstrap "gui/$(id -u)" "$DASH_PLIST"
+for p in "$PLIST" "$DASH_PLIST"; do
+  # bootout is asynchronous; retry until the old job has fully unloaded.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    launchctl bootstrap "gui/$(id -u)" "$p" 2>/dev/null && continue 2
+    sleep 1
+  done
+  echo "failed to load $p" >&2; exit 1
+done
 echo "Installed $LABEL — runs every ${INTERVAL_SECONDS}s. Logs: $LOG"
 echo "Dashboard: http://localhost:$DASHBOARD_PORT"
 echo "Run now:  launchctl kickstart gui/$(id -u)/$LABEL"
