@@ -61,7 +61,7 @@ log "found $(jq length <<<"$prs") PR(s) awaiting review"
 write_status true "$prs"
 
 done_count=0
-while read -r pr; do
+while read -r pr <&3; do
   [ -z "$pr" ] && continue
   [ "$done_count" -ge "$MAX_PRS_PER_RUN" ] && { log "hit MAX_PRS_PER_RUN=$MAX_PRS_PER_RUN"; break; }
 
@@ -125,7 +125,7 @@ $(jq -r '.body // ""' <<<"$meta")
         "Bash(git diff:*)" "Bash(git log:*)" "Bash(git show:*)" "Bash(git blame:*)" \
       --disallowedTools "Edit" "Write" "NotebookEdit" "WebFetch" "WebSearch" "Agent" \
       --strict-mcp-config --no-session-persistence \
-      ${MODEL:+--model "$MODEL"})"
+      ${MODEL:+--model "$MODEL"} </dev/null)"
 
     if [ "$(jq -r '.is_error' <<<"$out")" != "false" ] || [ "$(jq '.structured_output == null' <<<"$out")" = "true" ]; then
       reason="$(jq -r '.result // .subtype' <<<"$out" | head -c 500)"
@@ -188,6 +188,6 @@ $(jq -r '.body // ""' <<<"$meta")
   fi
 
   [ "$DRY_RUN" = "1" ] || echo "$key" >>"$STATE_DIR/reviewed.txt"
-done < <(jq -c '.[]' <<<"$prs")
+done 3< <(jq -c '.[]' <<<"$prs")
 
 log "done"
