@@ -4,7 +4,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+_dry="${DRY_RUN:-}"   # a DRY_RUN given on the command line beats config.env
 [ -f "$ROOT/config.env" ] && . "$ROOT/config.env"
+DRY_RUN="${_dry:-${DRY_RUN:-0}}"
 
 : "${OWNERS:=}"             # space-separated orgs/users to limit to; empty = all
 : "${EXCLUDE_REPOS:=}"      # space-separated owner/repo to skip
@@ -12,8 +14,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 : "${MAX_PRS_PER_RUN:=5}"
 : "${MAX_ATTEMPTS:=3}"      # give up on a PR head after this many failures
 : "${MODEL:=}"              # empty = Claude Code default
-: "${DRY_RUN:=0}"
-: "${INTERVAL_SECONDS:=900}"           # 1 = print the review instead of posting it
+: "${INTERVAL_SECONDS:=900}"
+: "${MYSQL_ARGS:=-uroot}"   # mysql client connection flags
 STATE_DIR="${STATE_DIR:-$HOME/.local/state/pr-autoreview}"
 CACHE_DIR="${CACHE_DIR:-$HOME/.cache/pr-autoreview}"
 
@@ -22,18 +24,24 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 
 mkdir -p "$STATE_DIR" "$CACHE_DIR/repos"
-touch "$STATE_DIR/reviewed.txt" "$STATE_DIR/failures.txt"
+
+# History lives in MySQL (see db.sql). Values go in hex-encoded, so PR titles
+# and Claude output can never break out of the SQL string.
+mysql $MYSQL_ARGS <"$ROOT/db.sql"
+db() { mysql $MYSQL_ARGS -N -B pr_autoreview; }
+sqlstr() { printf "CONVERT(UNHEX('%s') USING utf8mb4)" "$(printf %s "$1" | xxd -p | tr -d '\n')"; }
 
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
 
-# Dashboard feed: one JSON line per PR state change, plus a status snapshot.
-EVENTS="$STATE_DIR/events.jsonl"
+# Dashboard feed: one events row per PR state change, plus a status snapshot file.
 emit() { # emit <status> [extra-json]
-  jq -cn --arg time "$(date -u +%FT%TZ)" --arg status "$1" --arg repo "$repo" \
+  local e
+  e="$(jq -cn --arg time "$(date -u +%FT%TZ)" --arg status "$1" --arg repo "$repo" \
     --arg number "$num" --arg url "$url" --arg title "$title" --arg sha "$sha" \
     --argjson extra "${2:-"{}"}" \
     '{time: $time, status: $status, repo: $repo, number: ($number | tonumber),
-      url: $url, title: $title, sha: $sha} + $extra' >>"$EVENTS"
+      url: $url, title: $title, sha: $sha} + $extra')"
+  db <<<"INSERT INTO events (data) VALUES ($(sqlstr "$e"))"
 }
 write_status() { # write_status <running:true|false> <queue-json>
   jq -n --argjson running "$1" --argjson queue "$2" --arg time "$(date -u +%FT%TZ)" \
@@ -85,10 +93,8 @@ while read -r pr <&3; do
     | tail -1)"
   key="$repo#$num@$sha@${requested_at:-unknown}"
 
-  grep -qxF "$key" "$STATE_DIR/reviewed.txt" && continue
-  if [ "$(grep -cxF "$key" "$STATE_DIR/failures.txt" || true)" -ge "$MAX_ATTEMPTS" ]; then
-    continue
-  fi
+  [ -n "$(db <<<"SELECT 1 FROM reviewed WHERE pr_key = $(sqlstr "$key")")" ] && continue
+  [ "$(db <<<"SELECT attempts FROM failures WHERE pr_key = $(sqlstr "$key")")" -ge "$MAX_ATTEMPTS" ] 2>/dev/null && continue
 
   log "reviewing $url ($sha)"
   done_count=$((done_count + 1))
@@ -188,14 +194,14 @@ $(jq -r '.body // ""' <<<"$meta")
   rc=$?
   set -e
   if [ "$rc" -ne 0 ]; then
-    echo "$key" >>"$STATE_DIR/failures.txt"
+    db <<<"INSERT INTO failures VALUES ($(sqlstr "$key"), 1) ON DUPLICATE KEY UPDATE attempts = attempts + 1"
     log "failed $url"
     [ "$rc" -eq 2 ] || emit failed '{"error":"Setup or posting failed; see ~/Library/Logs/pr-autoreview.log"}'
     continue
   fi
 
   if [ "$DRY_RUN" != "1" ]; then
-    echo "$key" >>"$STATE_DIR/reviewed.txt"
+    db <<<"INSERT IGNORE INTO reviewed VALUES ($(sqlstr "$key"))"
     # Posting a review clears the request, so drop it from the dashboard queue now.
     prs="$(jq --arg u "$url" 'map(select(.url != $u))' <<<"$prs")"
     write_status true "$prs"

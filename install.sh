@@ -10,7 +10,7 @@ LABEL="local.pr-autoreview"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$HOME/Library/Logs/pr-autoreview.log"
 
-for bin in gh claude jq git; do
+for bin in gh claude jq git mysql xxd; do
   command -v "$bin" >/dev/null || { echo "missing dependency: $bin" >&2; exit 1; }
 done
 gh auth status >/dev/null 2>&1 || { echo "run: gh auth login" >&2; exit 1; }
@@ -67,6 +67,8 @@ cat >"$DASH_PLIST" <<EOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>DASHBOARD_PORT</key><string>$DASHBOARD_PORT</string>
+    <key>MYSQL_ARGS</key><string>${MYSQL_ARGS:--uroot}</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>HOME</key><string>$HOME</string>
   </dict>
   <key>StandardOutPath</key><string>$LOG</string>
